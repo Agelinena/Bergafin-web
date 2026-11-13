@@ -19,6 +19,7 @@ import toast from 'components/toast/toast';
 import dialogHelper from 'components/dialogHelper/dialogHelper';
 import baseAlert from 'components/alert';
 import { getDefaultBackgroundClass } from 'components/cardbuilder/utils/builder';
+import { checkBergafin, handleBergafinTicket, isBergafinAvailable, startBergafinLogin } from 'bergafin/login';
 
 import './login.scss';
 
@@ -267,6 +268,9 @@ export default function (view, params) {
     view.querySelector('.btnSelectServer').addEventListener('click', function () {
         Dashboard.selectServer();
     });
+    view.querySelector('.btnBergafin').addEventListener('click', function () {
+        startBergafinLogin(getApiClient());
+    });
 
     view.addEventListener('viewshow', function () {
         loading.show();
@@ -288,10 +292,17 @@ export default function (view, params) {
                 console.debug('Failed to get QuickConnect status');
             });
 
-        apiClient.getPublicUsers().then(function (users) {
+        if (handleBergafinTicket(params, apiClient, (id, token) => onLoginSuccessful(id, token, apiClient, getTargetUrl()))) {
+            return;
+        }
+
+        checkBergafin(view, apiClient).then(() => apiClient.getPublicUsers()).then(function (users) {
             if (users.length) {
                 showVisualForm();
                 loadUserList(view, apiClient, users);
+            } else if (isBergafinAvailable()) {
+                // Bergafin: o Authentik é o caminho principal; a senha fica no "Login manual"
+                showVisualForm();
             } else {
                 view.querySelector('#txtManualName').value = '';
                 showManualForm(view, false, false);
