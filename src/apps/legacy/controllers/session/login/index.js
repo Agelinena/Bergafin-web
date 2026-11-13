@@ -292,7 +292,7 @@ export default function (view, params) {
                 console.debug('Failed to get QuickConnect status');
             });
 
-        if (handleBergafinTicket(params, apiClient, (id, token) => onLoginSuccessful(id, token, apiClient, getTargetUrl()))) {
+        if (handleBergafinTicket(params, apiClient, (id, token) => onLoginSuccessful(id, token, apiClient, getTargetUrl()), () => checkBergafin(view, apiClient))) {
             return;
         }
 

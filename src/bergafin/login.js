@@ -15,6 +15,7 @@ import loading from 'components/loading/loading';
 import toast from 'components/toast/toast';
 
 let available = false;
+const handledTickets = new Set();
 
 /** O botão do Authentik está ativo neste servidor. */
 export function isBergafinAvailable() {
@@ -49,11 +50,17 @@ export function startBergafinLogin(apiClient) {
  * Se a tela de login abriu com ?bergafinTicket=…, troca o ticket por uma sessão.
  * Devolve true se havia ticket (a tela não deve mostrar o formulário).
  */
-export function handleBergafinTicket(params, apiClient, onSuccess) {
+export function handleBergafinTicket(params, apiClient, onSuccess, fallback) {
     const ticket = params.bergafinTicket;
     if (!ticket) {
         return false;
     }
+
+    // A tela pode disparar "viewshow" mais de uma vez; o ticket é de uso único
+    if (handledTickets.has(ticket)) {
+        return true;
+    }
+    handledTickets.add(ticket);
 
     loading.show();
     Promise.resolve(appHost.deviceId())
@@ -75,16 +82,23 @@ export function handleBergafinTicket(params, apiClient, onSuccess) {
             return res.json();
         })
         .then(result => {
-            loading.hide();
             appSettings.enableAutoLogin(true);
+            // Grava o token na lista de servidores, como o login com senha e o Quick
+            // Connect fazem (connectionManager.onAuthenticated). Sem isso, a tela inicial
+            // não acha a sessão e volta para o login.
+            return Promise.resolve(apiClient.onAuthenticated?.(apiClient, result)).then(() => result);
+        })
+        .then(result => {
+            loading.hide();
             onSuccess(result.User.Id, result.AccessToken);
         })
         .catch(err => {
             loading.hide();
             console.error('[Bergafin] falha ao trocar o ticket', err);
-            toast('O login pelo Authentik expirou. Tente de novo.');
-            // Volta para a tela de login normal, sem o ticket
-            window.location.replace(window.location.pathname + '#/login');
+            toast('O login pelo Authentik expirou. Clique em "Entrar com Authentik" de novo.');
+            // Mostra a tela de login normal (sem recarregar e sem repetir o ticket)
+            window.history.replaceState(null, '', window.location.pathname + '#/login');
+            fallback?.();
         });
     return true;
 }
