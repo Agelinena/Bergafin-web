@@ -48,10 +48,8 @@ jobs:
           platforms: linux/amd64
           build-args: JELLYFIN_VERSION=${{ steps.v.outputs.jellyfin }}
           push: true
-          tags: |
-            ghcr.io/agelinena/bergafin:latest
-            ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }}
-            ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }}-${{ steps.v.outputs.sha }}
+          # Só a tag exata; latest e X.Y saem depois da conferência
+          tags: ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }}-${{ steps.v.outputs.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -59,13 +57,22 @@ jobs:
         run: |
           IMG=ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }}-${{ steps.v.outputs.sha }}
           docker run -d --name jf -p 8096:8096 "$IMG"
-          for i in $(seq 1 60); do
-            curl -fsS http://localhost:8096/health >/dev/null 2>&1 && break
+          # Container novo, sem mídia: o /health fica "Degraded"; a API pública basta
+          for i in $(seq 1 90); do
+            curl -fsS http://localhost:8096/System/Info/Public >/dev/null 2>&1 && break
             sleep 2
           done
-          curl -fsS http://localhost:8096/health
-          # O nosso web tem que estar lá
+          curl -fsS http://localhost:8096/System/Info/Public || { docker logs jf | tail -50; exit 1; }
+          echo
+          # O web servido tem que ser o nosso
           curl -fsS http://localhost:8096/web/ | grep -q '<html'
           docker exec jf grep -rlq "bergafinTicket" /jellyfin/jellyfin-web \
             || { echo "O web da imagem não é o Bergafin-web"; exit 1; }
           docker rm -f jf
+
+      - name: Publicar latest e ${{ steps.v.outputs.jellyfin }}
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/agelinena/bergafin:latest \
+            -t ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }} \
+            ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }}-${{ steps.v.outputs.sha }}
