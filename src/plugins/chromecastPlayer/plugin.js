@@ -9,6 +9,7 @@ import alert from '../../components/alert';
 import { ServerConnections } from 'lib/jellyfin-apiclient';
 import Events from '../../utils/events.ts';
 import { getItems } from '../../utils/jellyfin-apiclient/getItems.ts';
+import { DMR_APP_ID, dmrReceiver } from 'bergafin/cast/dmrReceiver';
 
 // Based on https://github.com/googlecast/CastVideos-chrome/blob/master/CastVideos.js
 
@@ -110,7 +111,8 @@ class CastPlayer {
         const userId = apiClient.getCurrentUserId();
 
         apiClient.getUser(userId).then(user => {
-            const applicationID = user.Configuration.CastReceiverId;
+            // Bergafin: Default Media Receiver; o receptor é emulado aqui (src/bergafin/cast)
+            const applicationID = user && DMR_APP_ID;
             if (!applicationID) {
                 console.warn(`Not initializing chromecast: CastReceiverId is ${applicationID}`);
                 return;
@@ -209,6 +211,7 @@ class CastPlayer {
             document.removeEventListener('volumedownbutton', onVolumeDownKeyDown, false);
 
             console.debug('[chromecastPlayer] sessionUpdateListener: setting currentMediaSession to null');
+            dmrReceiver.reset();
             this.currentMediaSession = null;
 
             sendConnectionResult(false);
@@ -375,10 +378,8 @@ class CastPlayer {
     }
 
     sendMessageInternal(message) {
-        message = JSON.stringify(message);
-
-        this.session.sendMessage(messageNamespace, message, this.onPlayCommandSuccess.bind(this), this.errorHandler);
-        return Promise.resolve();
+        // Bergafin: as mensagens vão para o receptor emulado (src/bergafin/cast), não para o Chromecast
+        return dmrReceiver.handle(this, message);
     }
 
     onPlayCommandSuccess() {
