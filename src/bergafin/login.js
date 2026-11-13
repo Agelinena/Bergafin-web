@@ -3,7 +3,7 @@
  *
  * Depende do plugin Bergafin Auth no servidor (https://github.com/Agelinena/Bergafin-auth):
  *   GET  /Bergafin/Info                 -> { Configured }
- *   GET  /Bergafin/Login?mode=webfork   -> Authentik -> /web/#/login?bergafinTicket=…
+ *   GET  /Bergafin/Login?mode=webfork&state=…  -> Authentik -> /web/#/login?bergafinTicket=…&bergafinState=…
  *   POST /Bergafin/Exchange             -> troca o ticket por uma sessão
  *
  * Fica num módulo próprio para o código oficial ganhar só alguns ganchos
@@ -37,13 +37,46 @@ export function checkBergafin(view, apiClient) {
         });
 }
 
+const STATE_KEY = 'bergafinLoginState';
+const STATE_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Valor aleatório guardado só neste navegador/app. Ele volta junto com o ticket, e o
+ * ticket só é aceito se o state for este: um link de terceiros com o ticket de outra
+ * conta não consegue fazer este aparelho entrar nela.
+ */
+function newLoginState() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const state = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    try {
+        localStorage.setItem(STATE_KEY, JSON.stringify({ state, at: Date.now() }));
+    } catch (err) {
+        console.error('[Bergafin] não deu para guardar o state do login', err);
+    }
+    return state;
+}
+
+/** Confere (e consome) o state que voltou com o ticket. */
+function takeLoginState(state) {
+    let saved = null;
+    try {
+        saved = JSON.parse(localStorage.getItem(STATE_KEY));
+        localStorage.removeItem(STATE_KEY);
+    } catch {
+        saved = null;
+    }
+    return !!state && !!saved && saved.state === state && Date.now() - saved.at < STATE_TTL_MS;
+}
+
 /** Leva ao Authentik. No app Bergafin (Android), o app abre o navegador do sistema. */
 export function startBergafinLogin(apiClient) {
+    const state = newLoginState();
     if (window.NativeShell?.Bergafin?.login) {
-        window.NativeShell.Bergafin.login(apiClient.serverAddress());
+        window.NativeShell.Bergafin.login(apiClient.serverAddress(), state);
         return;
     }
-    window.location.href = apiClient.getUrl('Bergafin/Login') + '?mode=webfork';
+    window.location.href = apiClient.getUrl('Bergafin/Login') + '?mode=webfork&state=' + encodeURIComponent(state);
 }
 
 /**
@@ -61,6 +94,14 @@ export function handleBergafinTicket(params, apiClient, onSuccess, fallback) {
         return true;
     }
     handledTickets.add(ticket);
+
+    if (!takeLoginState(params.bergafinState)) {
+        console.warn('[Bergafin] ticket recusado: o login não foi iniciado neste aparelho');
+        toast('Login recusado: ele não foi iniciado neste aparelho. Clique em "Entrar com Authentik".');
+        window.history.replaceState(null, '', window.location.pathname + '#/login');
+        fallback?.();
+        return true;
+    }
 
     loading.show();
     Promise.resolve(appHost.deviceId())
