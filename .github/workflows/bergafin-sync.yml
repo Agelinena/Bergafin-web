@@ -1,0 +1,76 @@
+# Acompanha o jellyfin-web oficial: quando sai uma versão estável nova (vX.Y),
+# reaplica os nossos commits em cima dela (rebase), publica o main e monta a imagem.
+# Se o rebase conflitar, abre uma issue e nada muda.
+# Também desliga os workflows do projeto oficial, que não fazem sentido aqui.
+name: Bergafin - acompanhar oficial
+
+on:
+  schedule:
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+  packages: write
+
+concurrency:
+  group: bergafin-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.rebase.outputs.updated }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Desligar os workflows do projeto oficial
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow list --all --json name,state,path \
+            --jq '.[] | select(.state=="active") | select(.path | test("bergafin-") | not) | .path' \
+          | while read -r wf; do gh workflow disable "$(basename "$wf")" && echo "desligado: $wf"; done
+
+      - name: Rebase na versão oficial mais recente
+        id: rebase
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST=$(gh api repos/jellyfin/jellyfin-web/releases/latest --jq .tag_name)
+          BASE=$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD)
+          echo "Oficial: $LATEST, base atual: $BASE"
+          if [ "$LATEST" = "$BASE" ]; then exit 0; fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/jellyfin/jellyfin-web.git
+          git fetch --no-tags upstream "refs/tags/$LATEST:refs/tags/$LATEST"
+          if ! git rebase --onto "$LATEST" "$BASE" main; then
+            git rebase --abort
+            echo "conflict=$LATEST" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          git push origin "refs/tags/$LATEST"
+          git push --force-with-lease origin main
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+
+      - name: Avisar conflito
+        if: failure() && steps.rebase.outputs.conflict
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Conflito ao atualizar para o jellyfin-web ${{ steps.rebase.outputs.conflict }}"
+          gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number' | grep -q . \
+            || gh issue create --title "$TITLE" --body "O rebase dos commits do Bergafin conflitou. Resolva à mão: \`git fetch upstream tag ${{ steps.rebase.outputs.conflict }}\` e \`git rebase --onto ${{ steps.rebase.outputs.conflict }} <base atual> main\`. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  image:
+    needs: sync
+    if: needs.sync.outputs.updated == 'true'
+    uses: ./.github/workflows/bergafin-image.yml
