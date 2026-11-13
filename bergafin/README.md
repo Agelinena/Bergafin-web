@@ -26,3 +26,18 @@ Fork do [jellyfin-web](https://github.com/jellyfin/jellyfin-web) que acompanha a
 | `12.4-<commit>` | Versão exata, para voltar atrás |
 
 No compose, use `ghcr.io/agelinena/bergafin:latest` no lugar de `jellyfin/jellyfin`.
+
+## Cast (Chromecast)
+
+O cast usa o **Default Media Receiver** do Google. Ele é grátis, não precisa de registro e funciona em qualquer Chromecast, inclusive os antigos.
+
+- **Como funciona:** o receptor do Jellyfin, que normalmente roda dentro do Chromecast, é **emulado no aparelho que transmite** (`src/bergafin/cast/dmrReceiver.js`). Esse aparelho escolhe o stream, manda só o link ao Chromecast, cuida da fila, das legendas e do áudio e informa o progresso ao Jellyfin.
+- **Formatos** (`src/bergafin/cast/deviceProfile.js`):
+  - **Toca direto:** H.264 até 1080p em MP4.
+  - **Vira HLS:** o resto. Quando dá, o vídeo é só copiado, sem recodificar.
+  - **Legendas:** as de texto vão como WebVTT e trocam na hora; as de imagem são gravadas no vídeo.
+- **Mudanças no plugin oficial** (`plugins/chromecastPlayer`): só dois ganchos, o ID do receptor e o envio das mensagens.
+- **Onde funciona:** no Chrome do PC e no app Bergafin (Android).
+- **Limitações:**
+  - Se a página que transmite for recarregada, a fila se perde. O item atual continua tocando e os controles seguem funcionando.
+  - No celular, o app precisa continuar aberto, mesmo em segundo plano, para avançar a fila e informar o progresso.
