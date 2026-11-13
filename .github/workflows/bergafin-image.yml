@@ -57,15 +57,19 @@ jobs:
         run: |
           IMG=ghcr.io/agelinena/bergafin:${{ steps.v.outputs.jellyfin }}-${{ steps.v.outputs.sha }}
           docker run -d --name jf -p 8096:8096 "$IMG"
-          # Container novo, sem mídia: o /health fica "Degraded"; a API pública basta
-          for i in $(seq 1 90); do
-            curl -fsS http://localhost:8096/System/Info/Public >/dev/null 2>&1 && break
+          # Container novo, sem mídia: o /health fica "Degraded", e o web só é servido
+          # quando a inicialização termina. Espera o próprio web responder.
+          for i in $(seq 1 120); do
+            curl -fsS http://localhost:8096/web/index.html >/dev/null 2>&1 && break
             sleep 2
           done
-          curl -fsS http://localhost:8096/System/Info/Public || { docker logs jf | tail -50; exit 1; }
-          echo
+          if ! curl -fsS http://localhost:8096/web/index.html | grep -qi '<html'; then
+            curl -sS -i http://localhost:8096/web/index.html | head -20
+            docker exec jf ls -la /jellyfin/jellyfin-web | head -20
+            docker logs jf 2>&1 | tail -60
+            exit 1
+          fi
           # O web servido tem que ser o nosso
-          curl -fsS http://localhost:8096/web/ | grep -q '<html'
           docker exec jf grep -rlq "bergafinTicket" /jellyfin/jellyfin-web \
             || { echo "O web da imagem não é o Bergafin-web"; exit 1; }
           docker rm -f jf
